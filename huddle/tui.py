@@ -4,7 +4,7 @@ import asyncio
 
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
-from textual.widgets import Button, Footer, Header, Input, LoadingIndicator, Markdown, Static
+from textual.widgets import Button, Footer, Header, Input, LoadingIndicator, RichLog, Static
 
 from huddle.chat_agent import ChatAgent
 
@@ -28,7 +28,7 @@ class HuddleTui(App[None]):
         padding: 1 1;
         margin-right: 1;
     }
-    #right_panel { height: 1fr; }
+    #right_panel { width: 1fr; height: 1fr; }
     #quick_title { color: #a8b9ff; text-style: bold; margin-bottom: 1; }
     .quick_btn { margin-bottom: 1; }
     #chatlog {
@@ -36,7 +36,7 @@ class HuddleTui(App[None]):
         border: round #6f8cff;
         background: #0f1730;
         color: #d9e5ff;
-        padding: 1 2;
+        padding: 0 0;
     }
     #status_row {
         height: 3;
@@ -61,15 +61,10 @@ class HuddleTui(App[None]):
     def __init__(self, agent: ChatAgent) -> None:
         super().__init__()
         self.agent = agent
-        self._md: Markdown | None = None
+        self._log: RichLog | None = None
         self._status: Static | None = None
         self._spinner: LoadingIndicator | None = None
         self._input: Input | None = None
-        self._transcript = (
-            "# deepiri-huddle agent\n\n"
-            "- Try quick action buttons on the left\n"
-            "- Try: `summarize latest #announcements context`\n\n"
-        )
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -83,7 +78,7 @@ class HuddleTui(App[None]):
                     yield Button("Summarize #announcements", id="quick_discord", classes="quick_btn")
                     yield Button("Clear transcript", id="quick_clear", classes="quick_btn")
                 with Vertical(id="right_panel"):
-                    yield Markdown(self._transcript, id="chatlog")
+                    yield RichLog(id="chatlog", auto_scroll=True, markup=True, wrap=True)
             with Horizontal(id="status_row"):
                 yield Static("Ready", id="status")
                 yield LoadingIndicator(id="spinner")
@@ -95,11 +90,14 @@ class HuddleTui(App[None]):
         yield Footer()
 
     async def on_mount(self) -> None:
-        self._md = self.query_one("#chatlog", Markdown)
+        self._log = self.query_one("#chatlog", RichLog)
         self._status = self.query_one("#status", Static)
         self._spinner = self.query_one("#spinner", LoadingIndicator)
         self._spinner.display = False
         self._input = self.query_one("#chat_input", Input)
+        self._append("[bold]deepiri-huddle agent[/bold]")
+        self._append("- Try quick action buttons on the left")
+        self._append("- Try: summarize latest #announcements context")
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         if not self._input:
@@ -122,23 +120,26 @@ class HuddleTui(App[None]):
             return
         event.input.value = ""
         if text.lower() == "clear":
-            self._transcript = "# deepiri-huddle agent\n\n"
-            self._append("_Transcript cleared._")
+            if self._log:
+                self._log.clear()
+            self._append("[italic]Transcript cleared.[/italic]")
             return
-        self._append(f"**You:** {text}")
+        self._append(f"[bold cyan]You:[/bold cyan] {text}")
         self._set_status("Thinking...")
         if self._spinner:
             self._spinner.display = True
-        reply = await asyncio.to_thread(self.agent.reply, text)
-        self._append(f"**Agent:**\n{reply}")
+        try:
+            reply = await asyncio.to_thread(self.agent.reply, text)
+            self._append(f"[bold magenta]Agent:[/bold magenta] {reply}")
+        except Exception as exc:  # noqa: BLE001
+            self._append(f"[bold red]Agent error:[/bold red] {exc}")
         self._set_status("Ready")
         if self._spinner:
             self._spinner.display = False
 
     def _append(self, text: str) -> None:
-        self._transcript += text + "\n\n"
-        if self._md:
-            self._md.update(self._transcript)
+        if self._log:
+            self._log.write(text)
 
     def _set_status(self, text: str) -> None:
         if self._status:
