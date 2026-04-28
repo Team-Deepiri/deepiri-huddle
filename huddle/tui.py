@@ -20,17 +20,12 @@ class HuddleTui(App[None]):
         padding: 1 2;
         text-style: bold;
     }
-    #main_row { height: 1fr; }
-    #left_panel {
-        width: 32;
-        border: round #5b7cfa;
-        background: #101a36;
-        padding: 1 1;
-        margin-right: 1;
+    #quick_row {
+        height: 3;
+        padding: 0 1;
+        margin-bottom: 1;
     }
-    #right_panel { width: 1fr; height: 1fr; }
-    #quick_title { color: #a8b9ff; text-style: bold; margin-bottom: 1; }
-    .quick_btn { margin-bottom: 1; }
+    .quick_btn { margin-right: 1; }
     #chatlog {
         height: 1fr;
         border: round #6f8cff;
@@ -70,15 +65,12 @@ class HuddleTui(App[None]):
         yield Header(show_clock=True)
         with Vertical():
             yield Static("Deepiri Huddle Agentic Chat", id="titlebar")
-            with Horizontal(id="main_row"):
-                with Vertical(id="left_panel"):
-                    yield Static("Quick Actions", id="quick_title")
-                    yield Button("Next-week QA agenda", id="quick_qa", classes="quick_btn")
-                    yield Button("Next-week AI/ML agenda", id="quick_ai", classes="quick_btn")
-                    yield Button("Summarize #announcements", id="quick_discord", classes="quick_btn")
-                    yield Button("Clear transcript", id="quick_clear", classes="quick_btn")
-                with Vertical(id="right_panel"):
-                    yield RichLog(id="chatlog", auto_scroll=True, markup=True, wrap=True)
+            with Horizontal(id="quick_row"):
+                yield Button("Next-week QA agenda", id="quick_qa", classes="quick_btn")
+                yield Button("Next-week AI/ML agenda", id="quick_ai", classes="quick_btn")
+                yield Button("Summarize #announcements", id="quick_discord", classes="quick_btn")
+                yield Button("Clear transcript", id="quick_clear", classes="quick_btn")
+            yield RichLog(id="chatlog", auto_scroll=True, markup=True, wrap=True)
             with Horizontal(id="status_row"):
                 yield Static("Ready", id="status")
                 yield LoadingIndicator(id="spinner")
