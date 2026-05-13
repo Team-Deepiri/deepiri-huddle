@@ -6,6 +6,7 @@ from huddle.discord_feed import DiscordFeed
 from huddle.llm import MultiProviderLlm
 from huddle.memory import MemoryStore
 from huddle.models import MeetingPlan, MeetingRequest
+from huddle.plan_output import is_too_close_to_fallback, validate_meeting_plan_markdown
 from huddle.schedule import DEFAULT_TEAM_SCHEDULE, IT_ATTENDANCE_RULE
 
 
@@ -22,17 +23,24 @@ class MeetingPlanner:
 
     def plan(self, request: MeetingRequest) -> MeetingPlan:
         prompt = self._build_prompt(request)
+        fallback_markdown = self._fallback_markdown(request).strip()
         try:
             result = self.llm.generate(prompt)
-            markdown = result.text
+            markdown = result.text.strip()
             provider = result.provider
             model = result.model
             if not self._is_team_scope_valid(markdown, request.team_focus):
-                markdown = self._fallback_markdown(request)
+                markdown = fallback_markdown
                 provider = "deterministic-fallback"
                 model = "n/a"
+            else:
+                schema = validate_meeting_plan_markdown(markdown)
+                if not schema.ok or is_too_close_to_fallback(markdown, fallback_markdown):
+                    markdown = fallback_markdown
+                    provider = "deterministic-fallback"
+                    model = "n/a"
         except Exception:
-            markdown = self._fallback_markdown(request)
+            markdown = fallback_markdown
             provider = "deterministic-fallback"
             model = "n/a"
         plan = MeetingPlan(
