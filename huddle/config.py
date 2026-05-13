@@ -39,6 +39,12 @@ class Settings(BaseSettings):
 
     memory_file: str = Field(default=".huddle/memory.jsonl", alias="MEMORY_FILE")
 
+    huddle_log_level: str = Field(
+        default="INFO",
+        alias="HUDDLE_LOG_LEVEL",
+        description="Python logging level for the huddle package (DEBUG, INFO, WARNING, ...).",
+    )
+
     def provider_order(self) -> list[str]:
         return [item.strip().lower() for item in self.llm_provider_order.split(",") if item.strip()]
 

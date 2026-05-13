@@ -1,12 +1,21 @@
 from __future__ import annotations
 
+import logging
+
 from huddle.discord_feed import DiscordFeed
 from huddle.llm import MultiProviderLlm
 from huddle.memory import MemoryStore
 
+log = logging.getLogger(__name__)
+
 
 class ChatAgent:
-    def __init__(self, llm: MultiProviderLlm, memory: MemoryStore, discord_feed: DiscordFeed) -> None:
+    def __init__(
+        self,
+        llm: MultiProviderLlm,
+        memory: MemoryStore,
+        discord_feed: DiscordFeed,
+    ) -> None:
         self.llm = llm
         self.memory = memory
         self.discord_feed = discord_feed
@@ -35,9 +44,25 @@ User request:
 Respond with practical actions and outputs.
 """
         try:
-            text = self.llm.generate(prompt).text.strip()
-        except Exception:
-            text = "LLM unavailable. You can still run `huddle plan weekly` for deterministic plan output."
+            result = self.llm.generate(prompt)
+            text = result.text.strip()
+            log.info(
+                "chat_llm_reply_ok provider=%s model=%s chars=%s",
+                result.provider,
+                result.model,
+                len(text),
+            )
+        except Exception as exc:
+            log.warning(
+                "chat_llm_unavailable_using_static_reply error_type=%s error=%s",
+                type(exc).__name__,
+                str(exc)[:800],
+                exc_info=log.isEnabledFor(logging.DEBUG),
+            )
+            text = (
+                "LLM unavailable. You can still run `huddle plan weekly` "
+                "for deterministic plan output."
+            )
         self.memory.append("assistant", text)
         return text
 

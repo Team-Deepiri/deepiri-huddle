@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import logging
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
 
 import httpx
 
 from huddle.config import Settings
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -32,17 +35,37 @@ class MultiProviderLlm:
 
     def generate(self, prompt: str) -> LlmResult:
         errors: list[str] = []
+        order = self.settings.provider_order()
+        log.info("llm_generate_start provider_order=%s", ",".join(order))
         with httpx.Client(timeout=self.settings.llm_timeout_seconds) as client:
-            for provider in self.settings.provider_order():
+            for provider in order:
                 handler = self._handlers.get(provider)
                 if not handler:
-                    errors.append(f"unknown provider '{provider}'")
+                    msg = f"unknown provider '{provider}'"
+                    errors.append(msg)
+                    log.warning("llm_provider_skipped reason=%s", msg)
                     continue
                 try:
-                    return handler(client, self.settings, prompt)
+                    result = handler(client, self.settings, prompt)
+                    log.info(
+                        "llm_generate_succeeded provider=%s model=%s",
+                        result.provider,
+                        result.model,
+                    )
+                    return result
                 except Exception as exc:  # noqa: BLE001
-                    errors.append(f"{provider}: {exc}")
-        raise RuntimeError("all LLM providers failed: " + " | ".join(errors))
+                    err = f"{provider}: {exc}"
+                    errors.append(err)
+                    log.warning(
+                        "llm_provider_failed provider=%s error_type=%s error=%s",
+                        provider,
+                        type(exc).__name__,
+                        str(exc)[:500],
+                        exc_info=log.isEnabledFor(logging.DEBUG),
+                    )
+        summary = " | ".join(errors)
+        log.error("llm_all_providers_failed errors=%s", summary[:2000])
+        raise RuntimeError("all LLM providers failed: " + summary)
 
     @staticmethod
     def _call_ollama(client: httpx.Client, settings: Settings, prompt: str) -> LlmResult:

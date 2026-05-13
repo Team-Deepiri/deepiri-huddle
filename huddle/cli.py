@@ -12,6 +12,7 @@ from huddle.chat_agent import ChatAgent
 from huddle.config import Settings
 from huddle.discord_feed import DiscordFeed
 from huddle.llm import MultiProviderLlm
+from huddle.logging_setup import configure_logging
 from huddle.memory import MemoryStore
 from huddle.models import MeetingRequest
 from huddle.planner import MeetingPlanner
@@ -25,7 +26,20 @@ TEAM_CHOICES = ["ai-ml", "qa", "frontend-backend-infra", "it", "all-teams"]
 WEEK_CHOICES = ["current", "next"]
 
 
+@app.callback()
+def _main(
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        "-v",
+        help="Enable DEBUG logging (richer error detail for LLM and planner).",
+    ),
+) -> None:
+    configure_logging(verbose=verbose)
+
+
 def _build_planner() -> MeetingPlanner:
+    configure_logging(verbose=False)
     settings = Settings()
     return MeetingPlanner(
         llm=MultiProviderLlm(settings=settings),
@@ -35,6 +49,7 @@ def _build_planner() -> MeetingPlanner:
 
 
 def _build_chat_agent() -> ChatAgent:
+    configure_logging(verbose=False)
     settings = Settings()
     return ChatAgent(
         llm=MultiProviderLlm(settings=settings),

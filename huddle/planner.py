@@ -1,13 +1,20 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+import logging
+from datetime import UTC, datetime
 
 from huddle.discord_feed import DiscordFeed
 from huddle.llm import MultiProviderLlm
 from huddle.memory import MemoryStore
 from huddle.models import MeetingPlan, MeetingRequest
-from huddle.plan_output import is_too_close_to_fallback, validate_meeting_plan_markdown
+from huddle.plan_output import (
+    is_too_close_to_fallback,
+    similarity_to_fallback,
+    validate_meeting_plan_markdown,
+)
 from huddle.schedule import DEFAULT_TEAM_SCHEDULE, IT_ATTENDANCE_RULE
+
+log = logging.getLogger(__name__)
 
 
 class MeetingPlanner:
@@ -24,22 +31,61 @@ class MeetingPlanner:
     def plan(self, request: MeetingRequest) -> MeetingPlan:
         prompt = self._build_prompt(request)
         fallback_markdown = self._fallback_markdown(request).strip()
+        provider = "deterministic-fallback"
+        model = "n/a"
         try:
             result = self.llm.generate(prompt)
             markdown = result.text.strip()
             provider = result.provider
             model = result.model
+            log.info(
+                "planner_llm_response_ok meeting_title=%r provider=%s model=%s",
+                request.meeting_title,
+                provider,
+                model,
+            )
             if not self._is_team_scope_valid(markdown, request.team_focus):
+                log.warning(
+                    "planner_using_deterministic_fallback reason=invalid_team_scope "
+                    "meeting_title=%r team_focus=%r",
+                    request.meeting_title,
+                    request.team_focus,
+                )
                 markdown = fallback_markdown
                 provider = "deterministic-fallback"
                 model = "n/a"
             else:
                 schema = validate_meeting_plan_markdown(markdown)
-                if not schema.ok or is_too_close_to_fallback(markdown, fallback_markdown):
+                too_close = is_too_close_to_fallback(markdown, fallback_markdown)
+                if not schema.ok:
+                    err_preview = "; ".join(schema.errors)[:1200]
+                    log.warning(
+                        "planner_using_deterministic_fallback reason=schema_invalid "
+                        "meeting_title=%r errors=%s",
+                        request.meeting_title,
+                        err_preview,
+                    )
+                elif too_close:
+                    sim = similarity_to_fallback(markdown, fallback_markdown)
+                    log.warning(
+                        "planner_using_deterministic_fallback reason=too_similar_to_fallback "
+                        "meeting_title=%r similarity=%.3f",
+                        request.meeting_title,
+                        sim,
+                    )
+                if not schema.ok or too_close:
                     markdown = fallback_markdown
                     provider = "deterministic-fallback"
                     model = "n/a"
-        except Exception:
+        except Exception as exc:
+            log.warning(
+                "planner_using_deterministic_fallback reason=llm_error meeting_title=%r "
+                "error_type=%s error=%s",
+                request.meeting_title,
+                type(exc).__name__,
+                str(exc)[:800],
+                exc_info=log.isEnabledFor(logging.DEBUG),
+            )
             markdown = fallback_markdown
             provider = "deterministic-fallback"
             model = "n/a"
@@ -47,7 +93,13 @@ class MeetingPlanner:
             markdown=markdown.strip(),
             provider_used=provider,
             model_used=model,
-            generated_at_iso=datetime.now(timezone.utc).isoformat(),
+            generated_at_iso=datetime.now(UTC).isoformat(),
+        )
+        log.info(
+            "planner_plan_ready meeting_title=%r provider_used=%s model_used=%s",
+            request.meeting_title,
+            plan.provider_used,
+            plan.model_used,
         )
         if self.memory:
             self.memory.append("planner_request", f"{request.meeting_title} ({request.week_label})")
@@ -219,8 +271,5 @@ Rules:
         }.get(normalized_team)
         if expected_label and expected_label not in text:
             return False
-        for item in forbidden:
-            if item != expected_label and item in text:
-                return False
-        return True
+        return all(not (item != expected_label and item in text) for item in forbidden)
 
