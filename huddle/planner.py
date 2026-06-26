@@ -1,26 +1,190 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from huddle.discord_feed import DiscordFeed
 from huddle.llm import MultiProviderLlm
 from huddle.memory import MemoryStore
-from huddle.models import MeetingPlan, MeetingRequest
+from huddle.models import MeetingPlan, MeetingRequest, RenderMode
 from huddle.schedule import DEFAULT_TEAM_SCHEDULE, IT_ATTENDANCE_RULE
 
 
 class MeetingPlanner:
     def __init__(
         self,
-        llm: MultiProviderLlm,
+        llm: MultiProviderLlm | None = None,
         memory: MemoryStore | None = None,
         discord_feed: DiscordFeed | None = None,
+        no_llm_fallback: bool = True,
     ) -> None:
         self.llm = llm
         self.memory = memory
         self.discord_feed = discord_feed
+        self.no_llm_fallback = no_llm_fallback
+        self._env = None
+
+    @property
+    def _template_env(self):
+        if self._env is None:
+            try:
+                from jinja2 import Environment, PackageLoader, select_autoescape
+
+                self._env = Environment(
+                    loader=PackageLoader("huddle", "templates"),
+                    autoescape=select_autoescape(disabled_extensions=("j2",), default=False),
+                    trim_blocks=True,
+                    lstrip_blocks=True,
+                )
+            except Exception:
+                self._env = False
+        return self._env if self._env is not False else None
 
     def plan(self, request: MeetingRequest) -> MeetingPlan:
+        context = self._build_context(request)
+
+        if request.render_mode == RenderMode.HEURISTIC:
+            return self._plan_heuristic(request, context)
+        if request.render_mode == RenderMode.ENHANCED and self.llm and self.no_llm_fallback:
+            return self._plan_llm(request, context)
+        return self._plan_template(request, context)
+
+    def _build_context(self, request: MeetingRequest) -> dict:
+        schedule_lines = self._selected_schedule(request.team_focus)
+
+        git_ctx = None
+        doc_ctx = None
+        try:
+            from huddle.gitlog import gather_context
+
+            git_ctx = gather_context(days=7)
+        except Exception:
+            git_ctx = None
+
+        try:
+            from huddle.docfinder import scan_docs
+
+            doc_ctx = scan_docs()
+        except Exception:
+            doc_ctx = None
+
+        risks = []
+        if git_ctx:
+            try:
+                from huddle.risks import detect_risks, format_risks_markdown
+
+                risks = detect_risks(git_ctx)
+                risks_md = format_risks_markdown(risks)
+            except Exception:
+                risks_md = "*Risk detection unavailable.*"
+        else:
+            risks_md = "*No git context for risk detection.*"
+
+        objectives_md = [o for o in request.objectives]
+        memory_block = self._memory_block()
+        discord_block = self._discord_block()
+
+        return {
+            "meeting_title": request.meeting_title,
+            "meeting_type": request.meeting_type,
+            "team_focus": request.team_focus,
+            "attendees_count": request.attendees_count,
+            "week_label": request.week_label,
+            "target_date_iso": request.target_date_iso,
+            "objectives": objectives_md,
+            "notes": request.notes or "None provided.",
+            "schedule": schedule_lines,
+            "it_attendance_rule": IT_ATTENDANCE_RULE,
+            "git_context": git_ctx,
+            "doc_context": doc_ctx,
+            "risks": risks,
+            "risks_markdown": risks_md,
+            "discord_context": discord_block,
+            "memory": memory_block,
+            "archetype": request.archetype.value if request.archetype else None,
+            "generated_at": datetime.now(UTC).isoformat(),
+            "git_days": 7,
+        }
+
+    def _plan_template(self, request: MeetingRequest, context: dict) -> MeetingPlan:
+        env = self._template_env
+        if env is not None:
+            try:
+                template = env.get_template("plan.md.j2")
+                markdown = template.render(**context)
+                return MeetingPlan(
+                    markdown=markdown.strip(),
+                    provider_used="jinja2-template",
+                    model_used="n/a",
+                    generated_at_iso=datetime.now(UTC).isoformat(),
+                    render_mode=RenderMode.TEMPLATE,
+                )
+            except Exception:
+                pass
+
+        return self._plan_heuristic(request, context)
+
+    def _plan_heuristic(self, request: MeetingRequest, context: dict) -> MeetingPlan:
+        schedule_md = "\n".join(
+            (
+                f"- {slot.team_name}: {slot.day_of_week}, {slot.time_est} EST / "
+                f"{slot.time_cst} CST / {slot.time_mst} MST / {slot.time_pst} PST"
+            )
+            for slot in context["schedule"]
+        )
+        objectives_md = "\n".join(f"- {o}" for o in context["objectives"])
+        git_block = context.get("git_context")
+        git_section = "*Git tracking not available.*"
+        if git_block and git_block.commits:
+            authors_md = "\n".join(
+                f"- **{a.author}**: {a.commit_count} commit(s)" for a in git_block.authors[:8]
+            )
+            git_section = f"### Commits ({len(git_block.commits)} recent)\n{authors_md}"
+
+        risk_section = context.get("risks_markdown", "*No risk data.*")
+
+        return MeetingPlan(
+            markdown=f"""# {request.meeting_title} ({request.week_label})
+
+## Purpose
+- Meeting type: {request.meeting_type}
+- Team focus: {request.team_focus}
+- Week anchor: {request.target_date_iso}
+
+## Schedule
+{schedule_md}
+{IT_ATTENDANCE_RULE}
+
+## Recent Activity
+{git_section}
+
+## Group Round Table
+Each participant answers:
+1. What they are working on / planning next
+2. Wins
+3. Blockers
+- Timebox: 45-60 seconds each.
+
+## Risks and Blockers
+{risk_section}
+
+## Decisions Needed
+- Confirm week priorities and tradeoffs
+- Confirm escalation path for blockers
+
+## Action Items
+- [ ] Owner: Facilitator - Publish meeting notes (due: 24h)
+- [ ] Owner: Team Lead - Assign blocker owners (due: 48h)
+
+## Meeting Objectives
+{objectives_md}
+""".strip(),
+            provider_used="heuristic-fallback",
+            model_used="n/a",
+            generated_at_iso=datetime.now(UTC).isoformat(),
+            render_mode=RenderMode.HEURISTIC,
+        )
+
+    def _plan_llm(self, request: MeetingRequest, _context: dict) -> MeetingPlan:
         prompt = self._build_prompt(request)
         try:
             result = self.llm.generate(prompt)
@@ -28,23 +192,16 @@ class MeetingPlanner:
             provider = result.provider
             model = result.model
             if not self._is_team_scope_valid(markdown, request.team_focus):
-                markdown = self._fallback_markdown(request)
-                provider = "deterministic-fallback"
-                model = "n/a"
+                return self._plan_template(request, self._build_context(request))
         except Exception:
-            markdown = self._fallback_markdown(request)
-            provider = "deterministic-fallback"
-            model = "n/a"
-        plan = MeetingPlan(
+            return self._plan_template(request, self._build_context(request))
+        return MeetingPlan(
             markdown=markdown.strip(),
             provider_used=provider,
             model_used=model,
-            generated_at_iso=datetime.now(timezone.utc).isoformat(),
+            generated_at_iso=datetime.now(UTC).isoformat(),
+            render_mode=RenderMode.ENHANCED,
         )
-        if self.memory:
-            self.memory.append("planner_request", f"{request.meeting_title} ({request.week_label})")
-            self.memory.append("planner_response", plan.markdown[:1500])
-        return plan
 
     def _build_prompt(self, request: MeetingRequest) -> str:
         schedule_md = "\n".join(
@@ -110,6 +267,15 @@ Rules:
     def _discord_block(self) -> str:
         if not self.discord_feed:
             return "Discord not configured."
+        if not self.llm:
+            try:
+                messages = self.discord_feed.latest_messages()
+                if not messages:
+                    return "No Discord announcements available."
+                bullets = "\n".join(f"- {m.author}: {m.content[:200]}" for m in messages[-8:])
+                return "## Discord Announcements\n" + bullets
+            except Exception:
+                return "Discord unavailable."
         try:
             return self.discord_feed.summarized_context(self.llm)
         except Exception:
@@ -133,68 +299,6 @@ Rules:
             if normalized in slot.team_name.lower().replace("/", " ").replace("+", " ")
         ] or DEFAULT_TEAM_SCHEDULE
 
-    def _fallback_markdown(self, request: MeetingRequest) -> str:
-        schedule_md = "\n".join(
-            (
-                f"- {slot.team_name}: {slot.day_of_week}, {slot.time_est} EST / "
-                f"{slot.time_cst} CST / {slot.time_mst} MST / {slot.time_pst} PST"
-            )
-            for slot in self._selected_schedule(request.team_focus)
-        )
-        objectives_md = "\n".join(f"- {o}" for o in request.objectives)
-        return f"""# {request.meeting_title} ({request.week_label})
-
-## Purpose
-- Meeting type: {request.meeting_type}
-- Team focus: {request.team_focus}
-- Week anchor: {request.target_date_iso}
-
-## Agenda Timeline
-- 0:00-0:05 Opening, outcomes, and constraints
-- 0:05-0:12 Team Snapshot
-- 0:12-0:35 Group Round Table
-- 0:35-0:45 Decisions and blocker triage
-- 0:45-0:55 Action assignment
-- 0:55-1:00 Confidence check and close
-
-## Group Round Table
-- Each participant answers:
-  1. What they are working on / planning next
-  2. Wins
-  3. Blockers
-- Enforce 45-60 seconds each.
-
-## Team Snapshot
-- Current schedule:
-{schedule_md}
-- Top streams:
-  1. Delivery commitments
-  2. Cross-team dependencies
-  3. Quality and reliability concerns
-
-## Decisions Needed
-- Confirm week priorities and tradeoffs.
-- Confirm escalation path for blockers.
-
-## Risks and Blockers
-- Ownership ambiguity across teams.
-- Delivery risk from hidden dependencies.
-- Capacity constraints on critical paths.
-
-## Action Items
-- [ ] Owner: Team lead - Publish weekly priorities (due: next business day)
-- [ ] Owner: EM - Assign blocker owners (due: 48h)
-- [ ] Owner: Facilitator - Share notes + action tracker (due: 24h)
-
-## Follow-up Checklist
-- [ ] Notes posted
-- [ ] Owners acknowledged actions
-- [ ] Unresolved blockers moved to next prep list
-
-## Meeting Objectives
-{objectives_md}
-"""
-
     @staticmethod
     def _is_team_scope_valid(markdown: str, team_focus: str) -> bool:
         normalized_team = team_focus.strip().lower()
@@ -211,8 +315,4 @@ Rules:
         }.get(normalized_team)
         if expected_label and expected_label not in text:
             return False
-        for item in forbidden:
-            if item != expected_label and item in text:
-                return False
-        return True
-
+        return all(not (item != expected_label and item in text) for item in forbidden)
