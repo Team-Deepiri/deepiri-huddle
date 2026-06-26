@@ -1,0 +1,179 @@
+# {{ meeting_title }} ({{ week_label }})
+
+{% if archetype %}_Archetype: {{ archetype }}_ | {% endif %}_Generated: {{ generated_at }}_
+{% if git_context %}_Context: {{ git_context.repo_root }}_ | {% endif %}
+{% if doc_context %}_Docs scanned: {{ doc_context.repos | join(', ') }}_ | {% endif %}
+_Attendees: ~{{ attendees_count }}_
+
+---
+
+## Purpose
+
+- **Meeting type:** {{ meeting_type }}
+- **Team focus:** {{ team_focus }}
+- **Week anchor:** {{ target_date_iso }}
+{% if objectives %}
+- **Objectives:**
+{% for o in objectives %}
+  - {{ o }}
+{% endfor %}
+{% endif %}
+{% if notes and notes != "None" %}
+- **Notes:** {{ notes }}
+{% endif %}
+
+---
+
+## Schedule
+
+{% if schedule %}
+{% for slot in schedule %}
+- **{{ slot.team_name }}**: {{ slot.day_of_week }}, {{ slot.time_est }} EST / {{ slot.time_cst }} CST / {{ slot.time_mst }} MST / {{ slot.time_pst }} PST
+{% endfor %}
+{% if it_attendance_rule %}
+- {{ it_attendance_rule }}
+{% endif %}
+{% else %}
+*No schedule configured.*
+{% endif %}
+
+---
+
+## Team Snapshot
+
+{% if git_context and git_context.authors %}
+### Active Contributors (past {{ git_days }} days)
+{% for author in git_context.authors %}
+- **{{ author.author }}** — {{ author.commit_count }} commit(s) across {{ author.files_affected | length }} file(s){% if author.subjects %}: {% for s in author.subjects[:3] %}`{{ s[:80] }}`{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}
+{% endfor %}
+{% endif %}
+{% if git_context and git_context.silent_authors %}
+### Silent Contributors (no commits in window)
+{% for name in git_context.silent_authors[:5] %}
+- {{ name }}
+{% endfor %}
+{% endif %}
+{% if git_context and git_context.module_churn %}
+### Module Activity Heatmap
+{% for module, count in (git_context.module_churn | dictsort(by='value', reverse=true))[:5] %}
+- `{{ module }}/`: {{ count }} change(s)
+{% endfor %}
+{% endif %}
+{% if not git_context %}
+- *Git tracking not available.*
+{% endif %}
+
+---
+
+## Recent Activity
+
+{% if git_context and git_context.commits %}
+| Author | Commit | Subject | Files |
+|---|---|---|---|
+{% for c in git_context.commits[:10] %}
+| {{ c.author }} | `{{ c.hash[:8] }}` | {{ c.subject[:60] }} | {{ c.files_changed | length }} |
+{% endfor %}
+
+**Branch status:** {{ git_context.branch_summary }}
+{% else %}
+*No recent git activity data available.*
+{% endif %}
+
+{% if discord_context and discord_context != "Discord not configured." and discord_context != "Discord unavailable." %}
+### Discord Context
+{{ discord_context }}
+{% endif %}
+
+---
+
+## Group Round Table
+
+Each participant answers:
+1. **What they are working on / planning next** — reference recent commits and active branches.
+2. **Wins** — anything that went well.
+3. **Blockers** — anything slowing them down.
+
+{% if git_context and git_context.authors %}
+*Suggested check-in order:*
+{% for author in git_context.authors[:8] %}
+- [ ] {{ author.author }} ({{ author.commit_count }} commits this period)
+{% endfor %}
+{% endif %}
+*Timebox: 45–60 seconds per person.*
+
+---
+
+## Relevant Documents
+
+{% if doc_context and doc_context.docs %}
+| Document | Repository | Words | Last Modified |
+|---|---|---|---|
+{% for doc in doc_context.docs[:8] %}
+| {{ doc.title }} | {{ doc.repo }} | {{ doc.word_count }} | {{ doc.modified_date[:10] if doc.modified_date != 'unknown' else 'unknown' }} |
+{% endfor %}
+{% if doc_context.recent_changes %}
+### Recently Modified Documents
+{% for change in doc_context.recent_changes[:5] %}
+- `{{ change.commit }}` ({{ change.repo }})
+{% endfor %}
+{% endif %}
+{% else %}
+*No documents found. Configure `HUDDLE_REPOS` or place repos as siblings to auto-discover.*
+{% endif %}
+
+---
+
+## Risks and Blockers
+
+{% if risks %}
+{{ risks_markdown }}
+{% else %}
+*No significant risks detected from git activity.*
+{% endif %}
+
+---
+
+## Decisions Needed
+
+{% if archetype == 'standup' %}
+- Confirm today's priority for each participant
+- Identify anyone needing help
+{% elif archetype == 'retro' %}
+- Agree on top 3 things to change next sprint
+- Vote on action items
+{% elif archetype == 'sprint-review' %}
+- Demo sign-off per completed item
+- Accept/reject scope changes
+{% elif archetype == 'planning' %}
+- Confirm sprint capacity
+- Commit to sprint backlog
+{% else %}
+- Confirm week priorities and tradeoffs
+- Confirm escalation path for blockers
+- Align on cross-team dependencies
+{% endif %}
+
+---
+
+## Action Items
+
+{% if git_context and git_context.authors %}
+{% for author in git_context.authors[:5] %}
+- [ ] **Owner: {{ author.author }}** — Follow up on recent changes ({{ author.commit_count }} commits this period)
+{% endfor %}
+{% endif %}
+- [ ] **Owner: Facilitator** — Publish meeting notes (due: 24h)
+- [ ] **Owner: Team Lead** — Assign blocker owners (due: 48h)
+{% if risks %}
+- [ ] **Owner: EM** — Review risks above and assign mitigation owners
+{% endif %}
+
+---
+
+## Follow-up Checklist
+
+- [ ] Notes posted to shared channel
+- [ ] Owners acknowledged their action items
+- [ ] Unresolved blockers escalated
+- [ ] Next meeting agenda drafted
+- [ ] Risks tracked in project board

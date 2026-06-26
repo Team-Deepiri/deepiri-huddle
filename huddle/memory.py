@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 
@@ -20,7 +20,7 @@ class MemoryStore:
 
     def append(self, role: str, content: str) -> None:
         entry = MemoryEntry(
-            ts=datetime.now(timezone.utc).isoformat(),
+            ts=datetime.now(UTC).isoformat(),
             role=role,
             content=content.strip(),
         )
