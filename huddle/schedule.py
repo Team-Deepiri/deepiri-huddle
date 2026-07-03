@@ -1,6 +1,5 @@
 from huddle.models import TeamMeeting
 
-
 DEFAULT_TEAM_SCHEDULE: list[TeamMeeting] = [
     TeamMeeting("AI/ML", "Monday", "9:30 PM", "8:30 PM", "7:30 PM", "6:30 PM"),
     TeamMeeting("QA", "Monday", "10:00 PM", "9:00 PM", "8:00 PM", "7:00 PM"),

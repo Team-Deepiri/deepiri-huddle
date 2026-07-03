@@ -6,7 +6,9 @@ from huddle.memory import MemoryStore
 
 
 class ChatAgent:
-    def __init__(self, llm: MultiProviderLlm, memory: MemoryStore, discord_feed: DiscordFeed) -> None:
+    def __init__(
+        self, llm: MultiProviderLlm, memory: MemoryStore, discord_feed: DiscordFeed
+    ) -> None:
         self.llm = llm
         self.memory = memory
         self.discord_feed = discord_feed
@@ -37,7 +39,9 @@ Respond with practical actions and outputs.
         try:
             text = self.llm.generate(prompt).text.strip()
         except Exception:
-            text = "LLM unavailable. You can still run `huddle plan weekly` for deterministic plan output."
+            text = (
+                "LLM unavailable. Try `huddle plan weekly`"
+                " for heuristic/template-based plan output."
+            )
         self.memory.append("assistant", text)
         return text
-

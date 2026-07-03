@@ -77,15 +77,17 @@ class DiscordFeed:
         messages = self.latest_messages()
         if not messages:
             return "No Discord announcements available."
-        rendered = "\n".join(f"- {m.timestamp} | {m.author}: {m.content[:400]}" for m in messages[-20:])
+        rendered = "\n".join(
+            f"- {m.timestamp} | {m.author}: {m.content[:400]}" for m in messages[-20:]
+        )
         prompt = (
-            "Summarize these Discord #announcements updates for a weekly engineering meeting agenda.\n"
-            "Return markdown with heading '## Discord Announcements Summary' and 4-8 concise bullets.\n\n"
-            f"{rendered}"
+            "Summarize these Discord #announcements updates for a"
+            " weekly engineering meeting agenda.\n"
+            "Return markdown with heading '## Discord Announcements Summary'"
+            f" and 4-8 concise bullets.\n\n{rendered}"
         )
         try:
             return llm.generate(prompt).text.strip()
         except Exception:
             bullets = "\n".join(f"- {m.author}: {m.content}" for m in messages[-8:])
             return "## Discord Announcements Summary\n" + bullets
-
